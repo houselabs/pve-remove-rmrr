@@ -1,0 +1,63 @@
+name: Build RMRR Removed PVE Kernel
+on:
+  repository_dispatch:
+  release:
+    types: published
+  push:
+    branches:
+      - master
+
+env:
+  KERNEL_BRANCH: pve-kernel-5.3
+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: houselabs/pve-kernel-builder
+      volumes:
+        - /data:/usr/src
+    steps:
+      - name: Clone source code
+        run: |
+          cd /usr/src/
+          git clone git://git.proxmox.com/git/pve-kernel.git
+          cd /usr/src/pve-kernel
+          git checkout origin/$KERNEL_BRANCH
+          git submodule init
+          git submodule update
+      - name: Patch source code
+        run: |
+          cd /usr/src/pve-kernel/submodules/ubuntu-eoan
+          SEARCH_FILE="drivers/iommu/intel-iommu.c"
+          SEARCH_TARGET="Device is ineligible for IOMMU domain attach due to platform RMRR requirement.  Contact your platform vendor"
+          sed -i -e "/$SEARCH_TARGET/{n;d}" $SEARCH_FILE
+          sed -i "s/$SEARCH_TARGET/Device was ineligible for IOMMU domain attach due to platform RMRR requirement. Patch is in effect/g" $SEARCH_FILE
+          git diff > ../../patches/kernel/remove-rmrr-check.patch
+          echo "Generated patch:"
+          git diff
+          git checkout -- drivers/iommu/intel-iommu.c
+          cd -
+          sed -i "s/die \"strange directory name\"/\#die \"strange directory name\"/g" /usr/src/pve-kernel/debian/scripts/find-firmware.pl
+          sed -i 's/EXTRAVERSION=-${KREL}-pve/EXTRAVERSION=-${KREL}-pve-removermrr/g' /usr/src/pve-kernel/Makefile
+      - name: Compile the kernel
+        id: compile
+        run: |
+          cd /usr/src/pve-kernel
+          make update_modules
+          git submodule update --init --recursive
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 || make -j1 V=s
+          mkdir artifacts
+          mv *.deb artifacts/
+          echo "::set-output name=status::success"
+          echo "::set-env name=FILE_DATE::_$(date +"%Y%m%d%H%M")"
+      - name: Upload kernel
+        uses: actions/upload-artifact@master
+        if: steps.compile.outputs.status == 'success'
+        with:
+          name: ${{ env.KERNEL_BRANCH }}${{ env.FILE_DATE }}
+          path: /usr/src/pve-kernel/artifacts
+
+
