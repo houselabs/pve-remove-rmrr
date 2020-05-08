@@ -13,7 +13,8 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 25200
     container:
       image: houselabs/pve-kernel-builder
       volumes:
